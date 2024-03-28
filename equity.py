@@ -1,7 +1,7 @@
 import pandas as pd
 import math
 
-def find_atm(options_data: str, underlying_data: str , num_options: int, tol: float):
+def find_atm(options_data: str, underlying_data: str , num_options: int, tol: float) -> dict[tuple[str, str], pd.Timestamp]:
     """
     Finds at-the-money option couples (put and call) for a given issuer, only works with 1 issuer, do not input csv file with more than 1 issuer
 
