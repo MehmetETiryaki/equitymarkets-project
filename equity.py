@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import math
 
 def find_atm(options_data: str, underlying_data: str , num_options: int, tol: float) -> dict[tuple[str, str], pd.Timestamp]:
@@ -166,3 +167,31 @@ def long_straddle(options_data: str, underlying_data: str, options_dict: dict[tu
         i += 1
 
     return returns_list
+
+
+    """
+    Gets the number of shares to buy or sell given a list of options, should be from the same issuer and have contract size 100
+    
+    Args:
+        options_df: Pandas dataframe with WRDS options data
+        options_list: List of option symbols as str
+        date: The date to hedge at
+
+    Returns:
+        Number of underlying stocks to buy or sell
+
+    """
+def get_hedge_count(options_df: pd.DataFrame, options_list: list[str], date: pd.Timestamp) -> int:
+
+    total_delta = 0
+    for option in options_list:
+        specific_option_series = options_df[options_df["symbol"] == option]
+        option_at_given_time = specific_option_series[options_df["date"] == date]
+        option_at_given_time.reset_index(inplace=True)
+        delta = option_at_given_time["delta"][0]
+        if delta == np.nan:
+            # TODO: IMPLEMENT
+            pass
+        total_delta += delta
+
+    return int(-1 * round(total_delta, 2)  * 100) # TODO: Assumes contract size = 100, ensure this
