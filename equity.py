@@ -49,11 +49,16 @@ def find_atm(options_data: str, underlying_data: str, date: pd.Timestamp, num_op
     option_expiry_dict = {}
     expiry_set = set()
     for couple in atm_list:
-        option = couple[0]
-        expiration_date = options_df.loc[option]["exdate"]
+        option1 = couple[0]
+        option2 = couple[0]
+        expiration_date = options_df.loc[option1]["exdate"]
+        delta1 = options_df.loc[option1]["delta"]
+        delta2 = options_df.loc[option2]["delta"]
         expiration_time_interval = (expiration_date - date).days
-        option_expiry_dict[couple] = expiration_time_interval
-        expiry_set.add(expiration_time_interval)
+        if (delta1 != np.nan and delta2 != np.nan):
+            # TODO: Remove this after delta functionality
+            option_expiry_dict[couple] = expiration_time_interval
+            expiry_set.add(expiration_time_interval)
     expiry = min(expiry_set, key=lambda x: abs(x - target_expiry))
     option_expiry_dict = {key: value for key, value in option_expiry_dict.items() if value == expiry}
     
