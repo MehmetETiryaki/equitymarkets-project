@@ -2,61 +2,75 @@ import pandas as pd
 import numpy as np
 import math
 
-def find_atm(options_data: str, underlying_data: str , num_options: int, tol: float) -> dict[tuple[str, str], pd.Timestamp]:
+def find_atm(options_data: str, underlying_data: str, date: pd.Timestamp, num_options: int, target_expiry: int, tol: float) -> list[tuple[str, str]]:
     """
-    Finds at-the-money option couples (put and call) for a given issuer, only works with 1 issuer, do not input csv file with more than 1 issuer
+    Finds at-the-money option couples (put and call) for a given issuer at a specific date, only works with 1 issuer, do not input csv file with more than 1 issuer
+    Takes in the target days to expiry, and number of option couples as arguments.
 
     Args:
         options_data (str): csv file from WRDS OptionMetrics database containing options data, 
                             must include "date", "symbol", and "strike_price" columns
         underlying_data (str): csv file from WRDS CRSP database containing stocks data of the underlying stocks for the options,
                                must include "date", "PRC" data
+        date (pandas.Timestamp): The date to find ATM options at
+        target_expiry (int): The target days to expiry wanted, function returns the options closest to it
         num_options (int): Number of option couples to find
         tol (float): Relative tolerance for what constitutes at-the-money, for example 0.05 would consider anything +- %5 of the stock price atm
 
     Returns:
-        dict: A dictionary of tuples of option names (put and call in no specific order as str) that maps to the date when they are at-the-money
+        list: A list of tuples of option names (put and call in no specific order as str)
     """
 
     # Initializing data
-    options_df = pd.read_csv(options_data, parse_dates = ["date"])
+    options_df = pd.read_csv(options_data, parse_dates = ["exdate", "date"])
+    options_df = options_df[options_df["date"] == date]
+    options_df.reset_index(inplace=True)
+
     underlying_df = pd.read_csv(underlying_data, parse_dates = ["date"])
-    date_start = 0
-    atm_dict = {} # Return value
-    atm_list = [] # Keeping track of already picked options
+    underlying_df = underlying_df[underlying_df["date"] == date]
+    underlying_df.reset_index(inplace=True)
+    stock_price = underlying_df["PRC"][0]
 
-    for i, row in underlying_df.iterrows():
+    atm_list = [] # Return value
 
-        # Iterating over the underlying data date by date
-        if (len(atm_dict) >= num_options):
-            break
-        
-        cur_date = row["date"]
-        stock_price = row["PRC"]
+    for i, row in options_df.iterrows():
+        # Iterating over the options data for one given date
+        # Iterating over different options in one date given the stock at that date
+        if (math.isclose(stock_price, row["strike_price"] / 1000, rel_tol=tol)):
+            # At-the-money option
+            option_name = row["symbol"]
+            option_reverse = reverse_option(option_name) # Couple of the option, put or call with same strike and expiration
+            option_tuple = (option_name, option_reverse)
+            if (option_reverse in options_df["symbol"].values):
+                # Checking if the option has an atm couple, adding to dict if there is
+                atm_list.append(option_tuple)
 
-        for j in range(date_start, len(options_df)):
-            # Iterating over different options in one date given the stock at that date
-            if (options_df["date"][j] > row["date"]):
-                 # If past the date for the given stock, break inner loop and iterate the stock
-                 break
-            elif (options_df["date"][j] == cur_date):
-                # The options to iterate over
-                if (math.isclose(stock_price, options_df["strike_price"][j] / 1000, rel_tol=tol)):
-                    # At-the-money option
-                    option_name = options_df["symbol"][j]
-                    option_reverse = reverse_option(option_name) # Couple of the option, put or call with same strike and expiration
-                    option_tuple = (option_name, option_reverse)
-                    if (option_reverse in options_df["symbol"].values) and (option_tuple not in atm_list):
-                        # Checking if the option has an atm couple, adding to dict if there is
-                        atm_dict[option_tuple] = cur_date
-                        atm_list.append(option_tuple)
-                    if (len(atm_dict) >= num_options):
-                        break
-                date_start += 1 
-            else:
-                date_start += 1
+    options_df = options_df.set_index("symbol")
+    option_expiry_dict = {}
+    expiry_set = set()
+    for couple in atm_list:
+        option = couple[0]
+        expiration_date = options_df.loc[option]["exdate"]
+        expiration_time_interval = (expiration_date - date).days
+        option_expiry_dict[couple] = expiration_time_interval
+        expiry_set.add(expiration_time_interval)
+    expiry = min(expiry_set, key=lambda x: abs(x - target_expiry))
+    option_expiry_dict = {key: value for key, value in option_expiry_dict.items() if value == expiry}
+    
+    option_volume_dict = {}
+    for couple in option_expiry_dict:
+        option1 = couple[0]
+        option2 = couple[1]
+        option1_volume = options_df.loc[option1]["volume"]
+        option2_volume = options_df.loc[option2]["volume"]
+        avg_volume = (option1_volume + option2_volume) / 2
+        option_volume_dict[couple] = avg_volume
+    
+    option_volume_dict = sorted(option_volume_dict.items(), key=lambda x:x[1], reverse=True)
+    options_list = [option_couple[0] for option_couple in option_volume_dict[:num_options]]
 
-    return atm_dict
+    return options_list
+    
 
 def reverse_option(option_name:str) -> str:
     """
@@ -68,10 +82,11 @@ def reverse_option(option_name:str) -> str:
     Returns:
         str: Symbol of the couple of the option 
     """
-    if option_name[11] == "C":
-        reverse = option_name[:11] + "P" + option_name[12:]
+    option_list = option_name.split()
+    if option_list[1][6] == "C":
+        reverse = option_list[0] + " " + option_list[1][:6] + "P" + option_list[1][7:]
     else:
-        reverse = option_name[:11] + "C" + option_name[12:]
+        reverse = option_list[0] + " " + option_list[1][:6] + "C" + option_list[1][7:]
     return reverse
             
 # TODO: Mid market vs worst
