@@ -41,7 +41,8 @@ def find_atm(options_data: str, underlying_data: str, date: pd.Timestamp, num_op
             option_name = row["symbol"]
             option_reverse = reverse_option(option_name) # Couple of the option, put or call with same strike and expiration
             option_tuple = (option_name, option_reverse)
-            if (option_reverse in options_df["symbol"].values):
+            option_tuple_reverse = (option_reverse, option_name)
+            if (option_reverse in options_df["symbol"].values) and (option_tuple not in atm_list) and (option_tuple_reverse not in atm_list):
                 # Checking if the option has an atm couple, adding to dict if there is
                 atm_list.append(option_tuple)
 
@@ -50,7 +51,7 @@ def find_atm(options_data: str, underlying_data: str, date: pd.Timestamp, num_op
     expiry_set = set()
     for couple in atm_list:
         option1 = couple[0]
-        option2 = couple[0]
+        option2 = couple[1]
         expiration_date = options_df.loc[option1]["exdate"]
         delta1 = options_df.loc[option1]["delta"]
         delta2 = options_df.loc[option2]["delta"]
@@ -96,97 +97,31 @@ def reverse_option(option_name:str) -> str:
             
 # TODO: Mid market vs worst
 # N bid offer spread at closing options
-def short_straddle(options_data: str, underlying_data: str, options_dict: dict[tuple[str, str], pd.Timestamp]):
+def short_straddle(options_data: str, underlying_data: str, options_list: list[tuple[str, str]], date: pd.Timestamp):
 
-    options_df = pd.read_csv(options_data, parse_dates = ["date"])
+    options_df = pd.read_csv(options_data, parse_dates = ["exdate", "date"])
     underlying_df = pd.read_csv(underlying_data, parse_dates = ["date"])
-    returns_list = [0 for i in options_dict]
+    options_df_start_date = options_df[options_df["date"] == date]
+    expiry_date_list = [options_df_start_date.loc[options_df_start_date["symbol"] == option[0], "exdate"].iloc[0] for option in options_list]
+    expiry_date_set = set(expiry_date_list)
+    max_expiry = max(expiry_date_set)
+    days_until_last_expiry = (max_expiry - date).days
+    costs = sum([options_df_start_date.loc[options_df_start_date["symbol"] == option[0], "best_bid"].iloc[0] for option in options_list]) + \
+            sum([options_df_start_date.loc[options_df_start_date["symbol"] == option[1], "best_bid"].iloc[0] for option in options_list])
+    num_underlying = 0
 
-    i = 0
-    for option_couple in options_dict:
+    for day in range(1, days_until_last_expiry + 1):
+        cur_date = date + pd.Timedelta(days=day)
+        options_list_seperated =  []
+        for couple in options_list:
+            options_list_seperated.append(couple[0])
+            options_list_seperated.append(couple[1])
+        num_stocks_to_buy = get_hedge_count(options_df, options_list_seperated, cur_date)
+        num_underlying += num_stocks_to_buy
+        spot_price = underlying_df.loc[underlying_df["date"] == cur_date, "PRC"].iloc[0]
+        #print(spot_price)
+        #for option_couple in options_list:
 
-        if (option_couple[0][11] == "C"):
-            call_index = 0
-            put_index = 1
-        else:
-            call_index = 1
-            put_index = 0
-
-        given_option_df = options_df[options_df['symbol'] == option_couple[call_index]]
-        given_option_atm_date_df = given_option_df[given_option_df["date"] == options_dict[option_couple]]
-        call_option_atm_series = given_option_atm_date_df
-
-        given_option_df = options_df[options_df['symbol'] == option_couple[put_index]]
-        given_option_atm_date_df = given_option_df[given_option_df["date"] == options_dict[option_couple]]
-        put_option_atm_series = given_option_atm_date_df
-
-        exec_date = options_dict[option_couple]
-        strike_price = int(option_couple[0][12:]) / 1000
-        contract_size = call_option_atm_series["contract_size"].item()
-        spot_at_expiration = underlying_df[underlying_df["date"] == exec_date]["PRC"].item()
-
-        best_bid_call = call_option_atm_series["best_bid"].item() * 100
-        best_bid_put = put_option_atm_series["best_bid"].item() * 100
-
-        if (not math.isclose(best_bid_call, 0) and not math.isclose(best_bid_put, 0)):
-
-            # Selling options
-            returns_list[i] += best_bid_call
-            returns_list[i] += best_bid_put
-
-            if spot_at_expiration > strike_price or spot_at_expiration < strike_price:
-                # One of the options is exercised
-                returns_list[i] -= abs((spot_at_expiration - strike_price) * contract_size)
-
-        i += 1
-
-    return returns_list
-
-def long_straddle(options_data: str, underlying_data: str, options_dict: dict[tuple[str, str], pd.Timestamp]):
-
-    options_df = pd.read_csv(options_data, parse_dates = ["date"])
-    underlying_df = pd.read_csv(underlying_data, parse_dates = ["date"])
-    returns_list = [0 for i in options_dict]
-
-    i = 0
-    for option_couple in options_dict:
-
-        if (option_couple[0][11] == "C"):
-            call_index = 0
-            put_index = 1
-        else:
-            call_index = 1
-            put_index = 0
-
-        given_option_df = options_df[options_df['symbol'] == option_couple[call_index]]
-        given_option_atm_date_df = given_option_df[given_option_df["date"] == options_dict[option_couple]]
-        call_option_atm_series = given_option_atm_date_df
-
-        given_option_df = options_df[options_df['symbol'] == option_couple[put_index]]
-        given_option_atm_date_df = given_option_df[given_option_df["date"] == options_dict[option_couple]]
-        put_option_atm_series = given_option_atm_date_df
-
-        exec_date = options_dict[option_couple]
-        strike_price = int(option_couple[0][12:]) / 1000
-        contract_size = call_option_atm_series["contract_size"].item()
-        spot_at_expiration = underlying_df[underlying_df["date"] == exec_date]["PRC"].item()
-
-        best_ask_call = call_option_atm_series["best_offer"].item() * 100
-        best_ask_put = put_option_atm_series["best_offer"].item() * 100
-
-        if (not math.isclose(best_ask_call, 0) and not math.isclose(best_ask_put, 0)):
-
-            # Selling options
-            returns_list[i] -= best_ask_call
-            returns_list[i] -= best_ask_put
-
-            if spot_at_expiration > strike_price or spot_at_expiration < strike_price:
-                # One of the options is exercised
-                returns_list[i] += abs((spot_at_expiration - strike_price) * contract_size)
-
-        i += 1
-
-    return returns_list
 
 
     """
@@ -203,12 +138,16 @@ def long_straddle(options_data: str, underlying_data: str, options_dict: dict[tu
     """
 def get_hedge_count(options_df: pd.DataFrame, options_list: list[str], date: pd.Timestamp) -> int:
 
+    print(options_list)
+    i = 0
     total_delta = 0
     for option in options_list:
         specific_option_series = options_df[options_df["symbol"] == option]
         option_at_given_time = specific_option_series[options_df["date"] == date]
         option_at_given_time.reset_index(inplace=True)
-        delta = option_at_given_time["delta"][0]
+        delta = option_at_given_time.loc[0, "delta"]
+        print(i)
+        i += 1
         if delta == np.nan:
             # TODO: IMPLEMENT
             pass
