@@ -202,7 +202,6 @@ def long_straddle(options_data: str, underlying_data: str, options_dict: dict[tu
 
     """
 def get_hedge_count(options_df: pd.DataFrame, options_list: list[str], date: pd.Timestamp) -> int:
-
     total_delta = 0
     for option in options_list:
         specific_option_series = options_df[options_df["symbol"] == option]
