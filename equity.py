@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 import math
+from scipy import optimize
+import scipy.stats as si
+from scipy.stats import norm
 
 def find_atm(options_data: str, underlying_data: str, date: pd.Timestamp, num_options: int, target_expiry: int, tol: float) -> list[tuple[str, str]]:
     """
@@ -95,35 +98,6 @@ def reverse_option(option_name:str) -> str:
         reverse = option_list[0] + " " + option_list[1][:6] + "C" + option_list[1][7:]
     return reverse
             
-# TODO: Mid market vs worst
-# N bid offer spread at closing options
-def short_straddle(options_data: str, underlying_data: str, options_list: list[tuple[str, str]], date: pd.Timestamp):
-
-    options_df = pd.read_csv(options_data, parse_dates = ["exdate", "date"])
-    underlying_df = pd.read_csv(underlying_data, parse_dates = ["date"])
-    options_df_start_date = options_df[options_df["date"] == date]
-    expiry_date_list = [options_df_start_date.loc[options_df_start_date["symbol"] == option[0], "exdate"].iloc[0] for option in options_list]
-    expiry_date_set = set(expiry_date_list)
-    max_expiry = max(expiry_date_set)
-    days_until_last_expiry = (max_expiry - date).days
-    costs = sum([options_df_start_date.loc[options_df_start_date["symbol"] == option[0], "best_bid"].iloc[0] for option in options_list]) + \
-            sum([options_df_start_date.loc[options_df_start_date["symbol"] == option[1], "best_bid"].iloc[0] for option in options_list])
-    num_underlying = 0
-
-    for day in range(1, days_until_last_expiry + 1):
-        cur_date = date + pd.Timedelta(days=day)
-        options_list_seperated =  []
-        for couple in options_list:
-            options_list_seperated.append(couple[0])
-            options_list_seperated.append(couple[1])
-        num_stocks_to_buy = get_hedge_count(options_df, options_list_seperated, cur_date)
-        num_underlying += num_stocks_to_buy
-        spot_price = underlying_df.loc[underlying_df["date"] == cur_date, "PRC"].iloc[0]
-        #print(spot_price)
-        #for option_couple in options_list:
-
-
-
     """
     Gets the number of shares to buy or sell given a list of options, should be from the same issuer and have contract size 100
     
@@ -136,21 +110,98 @@ def short_straddle(options_data: str, underlying_data: str, options_list: list[t
         Number of underlying stocks to buy or sell
 
     """
-def get_hedge_count(options_df: pd.DataFrame, options_list: list[str], date: pd.Timestamp) -> int:
+def get_total_delta(options_df: pd.DataFrame, underlying_df: pd.DataFrame, risk_free_df: pd.DataFrame, options_list: list[str], date: pd.Timestamp) -> float:
 
-    print(options_list)
-    i = 0
+    try:
+        starting_date = date - pd.Timedelta(days=365)
+        starting_dividend = underlying_df.loc[underlying_df['date'] == starting_date, 'DIVAMT'].item()
+    except:
+        starting_date = underlying_df.iloc[0]["date"]
+    
+    start_index = underlying_df.index[underlying_df['date'] == starting_date].tolist()[0]
+    end_index = underlying_df.index[underlying_df['date'] == date].tolist()[0]
+
+    volatility_df = underlying_df.iloc[start_index:end_index+1]
+
+    cur_price = underlying_df.loc[underlying_df['date'] == date, 'PRC'].item()
+    historical = volatility_df['PRC'].std() / cur_price
+
     total_delta = 0
     for option in options_list:
-        specific_option_series = options_df[options_df["symbol"] == option]
-        option_at_given_time = specific_option_series[options_df["date"] == date]
-        option_at_given_time.reset_index(inplace=True)
-        delta = option_at_given_time.loc[0, "delta"]
-        print(i)
-        i += 1
-        if delta == np.nan:
-            # TODO: IMPLEMENT
-            pass
+        delta = get_delta(options_df, underlying_df, risk_free_df, option, date, historical)
         total_delta += delta
 
-    return int(-1 * round(total_delta, 2)  * 100) # TODO: Assumes contract size = 100, ensure this
+    return total_delta
+
+def get_iv(S, K, T, r, market_price, option_type, q=0, historical=None):
+    
+    if (option_type == "C"):
+        def bs_price(sigma):
+            d1 = (np.log(S/K)+(r-q+0.5*sigma**2)*T)/(sigma*np.sqrt(T))
+            d2 = d1-(sigma*np.sqrt(T))
+            price = S*np.exp(-q*T)*si.norm.cdf(d1,0,1)-K*np.exp(-r*T)*si.norm.cdf(d2,0,1)
+            f = price - market_price
+            return f
+    elif (option_type == "P"):
+        def bs_price(sigma):
+            d1 = (np.log(S/K)+(r-q+0.5*sigma**2)*T)/(sigma*np.sqrt(T))
+            d2 = d1-(sigma*np.sqrt(T))
+            price = -S*np.exp(-q*T)*si.norm.cdf(-d1,0,1)+K*np.exp(-r*T)*si.norm.cdf(-d2,0,1)
+            f = price - market_price
+            return f
+    
+    try:
+        return optimize.brentq(bs_price,0.0001,100,maxiter=1000)
+    except ValueError:
+        # Brent failed, trying Newton-Rhapson
+        try:
+            return optimize.newton(bs_price, historical)
+        except RuntimeError:
+            # Newton-Rhapson failed, using historical volatility
+            print("HEREEEEEE")
+            return historical
+
+def delta_calc(r, S, K, T, sigma, type, q=0):
+
+    d1= (np.log(S/K)+(r-q+0.5*sigma**2)*T)/(sigma*np.sqrt(T))
+    if type == "C":
+        delta_calc = norm.cdf(d1, 0, 1)
+    elif type == "P":
+        delta_calc = -norm.cdf(-d1, 0, 1)
+    return delta_calc
+
+def get_delta(options_df, underlying_df, risk_free_df, option, date, historical):
+    option_df = options_df[options_df["date"] == date]
+    option_df = option_df[option_df["symbol"] == option]
+    spot = underlying_df.loc[underlying_df['date'] == date, 'PRC'].item()
+    strike = option_df["strike_price"].item() / 1000
+    time_to_maturity = (option_df["exdate"].item() - date).days / 365
+    price = (option_df["best_bid"].item() + option_df["best_offer"].item()) / 2
+    type = option.split()[1][6]
+    risk_free_rate = risk_free_df.loc[risk_free_df['DATE'] == date, 'DGS10'].item()
+    risk_free_rate = float(risk_free_rate) / 100
+    try:
+        starting_date = date - pd.Timedelta(days=365)
+        starting_dividend = underlying_df.loc[underlying_df['date'] == starting_date, 'DIVAMT'].item()
+    except:
+        starting_date = underlying_df.iloc[0]["date"]
+
+    running_date = starting_date
+
+    total_dividends = 0
+    while(running_date < date):
+        try:
+            dividend = underlying_df.loc[underlying_df['date'] == running_date, 'DIVAMT'].item()
+        except:
+            running_date += pd.Timedelta(days=1)
+            continue
+        if  not math.isnan(dividend):
+            total_dividends += dividend
+        running_date += pd.Timedelta(days=1)
+
+    dividend_yield = total_dividends / spot
+
+    iv = get_iv(S=spot, K=strike, T=time_to_maturity, r=risk_free_rate, market_price=price, option_type=type, q = dividend_yield, historical=historical)
+    delta = delta_calc(S=spot, K=strike, T=time_to_maturity, r=risk_free_rate, sigma=iv, type=type, q = dividend_yield)
+
+    return delta
