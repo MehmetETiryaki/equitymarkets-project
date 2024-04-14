@@ -259,7 +259,7 @@ def calculate_allocation_premium_neutral(
     total_stock_premiums = {}
 
     for stock, stock_option_path in paths_to_stock_options.items():
-        stock_options_df = pd.read_csv(stock_option_path)
+        stock_options_df = pd.read_csv(stock_option_path, parse_dates=["exdate", "date"])
         stock_underlying_path = paths_to_stock_underlying[stock]
         stock_atm_options = find_atm(stock_option_path, stock_underlying_path, date, 1, target_expiry, tol)
 
