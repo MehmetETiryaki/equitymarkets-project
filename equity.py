@@ -221,4 +221,66 @@ def get_delta(options_df, underlying_df, risk_free_df, option, date, historical)
     iv = get_iv(S=spot, K=strike, T=time_to_maturity, r=risk_free_rate, market_price=price, option_type=type, q = dividend_yield, historical=historical)
     delta = delta_calc(S=spot, K=strike, T=time_to_maturity, r=risk_free_rate, sigma=iv, type=type, q = dividend_yield)
 
-    return delta
+    return delta    
+
+def calculate_allocation_premium_neutral(
+        num_options: int, 
+        path_to_etf_options: str,
+        path_to_etf_underlying: str,
+        paths_to_stock_options: dict[str, str], 
+        paths_to_stock_underlying: dict[str, str], 
+        date: pd.Timestamp, 
+        target_expiry: int,
+        tol: float,
+        etf_weightings: dict[str, float]) -> dict[str, float]:
+    
+    # Calculate index premium
+    etf_atm_options = find_atm(path_to_etf_options, path_to_etf_underlying, date, 1, target_expiry, tol)
+    etf_options_df = pd.read_csv(path_to_etf_options, parse_dates = ["exdate", "date"])
+                              
+   # Calculate total ETF premium from ATM options
+    total_etf_premium = 0
+    for call_id, put_id in etf_atm_options:
+        call_data = etf_options_df.loc[etf_options_df['symbol'] == call_id].iloc[0]
+        put_data = etf_options_df.loc[etf_options_df['symbol'] == put_id].iloc[0]
+        call_premium = ((call_data['best_bid'] + call_data['best_offer']) / 2) * call_data['contract_size']
+        put_premium = ((put_data['best_bid'] + put_data['best_offer']) / 2) * put_data['contract_size']
+        total_etf_premium += call_premium + put_premium
+    
+    total_etf_premium *= num_options # Only 1 atm option couple for ETF, so multiply by number of options we buy/sell
+
+    # Calculate total ETF premium from ATM options
+    total_etf_premium = 0
+    for call_id, put_id in etf_atm_options:
+        call_data = etf_options_df.loc[etf_options_df['symbol'] == call_id].iloc[0]
+        put_data = etf_options_df.loc[etf_options_df['symbol'] == put_id].iloc[0]
+        call_premium = ((call_data['best_bid'] + call_data['best_offer']) / 2) * call_data['contract_size']
+        put_premium = ((put_data['best_bid'] + put_data['best_offer']) / 2) * put_data['contract_size']
+        total_etf_premium += call_premium + put_premium
+
+    total_stock_premiums = {}
+
+    for stock, stock_option_path in paths_to_stock_options.items():
+        stock_options_df = pd.read_csv(stock_option_path)
+        stock_underlying_path = paths_to_stock_underlying[stock]
+        stock_atm_options = find_atm(stock_option_path, stock_underlying_path, date, 1, target_expiry, tol)
+
+        total_stock_premium = 0
+        for call_id, put_id in stock_atm_options:
+            call_data = stock_options_df.loc[stock_options_df['symbol'] == call_id].iloc[0]
+            put_data = stock_options_df.loc[stock_options_df['symbol'] == put_id].iloc[0]
+            call_premium = ((call_data['best_bid'] + call_data['best_offer']) / 2) * call_data['contract_size']
+            put_premium = ((put_data['best_bid'] + put_data['best_offer']) / 2) * put_data['contract_size']
+            total_stock_premium += call_premium + put_premium
+        
+        total_stock_premiums[stock] = total_stock_premium
+
+    # Constant multiplier
+    weighted_premiums = {stock: total_stock_premiums[stock] * etf_weightings[stock] for stock in etf_weightings}
+    sum_weighted_premiums = sum(weighted_premiums.values())
+    constant_multiplier = total_etf_premium / sum_weighted_premiums
+
+    # Apply constant multiplier to each stock's weighted premium to determine the number of straddles
+    allocation_results = {stock: round(weighted_premiums[stock] * constant_multiplier / total_stock_premiums[stock]) for stock in weighted_premiums}
+
+    return allocation_results
