@@ -151,7 +151,7 @@ def get_iv(S, K, T, r, market_price, option_type, q=0, historical=None):
             return f
     
     try:
-        return optimize.brentq(bs_price,0.00000001,10000,maxiter=1000)
+        return optimize.brentq(bs_price,0.000000001,10000,maxiter=2000)
     except ValueError:
         # Brent failed, trying Newton-Rhapson
         try:
@@ -195,8 +195,6 @@ def get_delta(options_df, underlying_df, risk_free_df, option, date, historical)
                 continue
             
     risk_free_rate = float(risk_free_rate) / 100
-    print(date)
-    print(risk_free_rate)
     try:
         starting_date = date - pd.Timedelta(days=365)
         starting_dividend = underlying_df.loc[underlying_df['date'] == starting_date, 'DIVAMT'].item()

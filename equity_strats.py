@@ -6,21 +6,29 @@ from equity import find_atm
 import equity as eq
 
 
-def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, options_df, underlying_df, risk_free_df, start_date, number_of_options, expiration_time, hedging=True):
+def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, options_df, underlying_df, risk_free_df, start_date, number_of_options, expiration_time, hedging=True, file=None):
     portfolio = {'options': [], 'underlying': 0, 'premium_costs': 0, "stock_costs": 0}
     daily_returns = []
     nyse_calendar = mcal.get_calendar('NYSE')
 
-    atm_options = find_atm(options_csv, underlying_csv, start_date, number_of_options,expiration_time, 0.1)
+    atm_options = find_atm(options_csv, underlying_csv, start_date, 1,expiration_time, 0.1)
+    option_couple = atm_options[0]
+    for i in range(number_of_options - 1):
+        atm_options.append(option_couple)
     print(atm_options)
-    for call_id, put_id in atm_options:
-        call_data = options_df.loc[options_df['symbol'] == call_id].iloc[0]
-        put_data = options_df.loc[options_df['symbol'] == put_id].iloc[0]
-        call_premium = ((call_data['best_bid'] + call_data['best_offer']) / 2) * call_data['contract_size']
-        put_premium = ((put_data['best_bid'] + put_data['best_offer']) / 2) * put_data['contract_size']
-        portfolio['options'].append({'data': call_data, 'symbol': call_id, 'premium_received': call_premium})
-        portfolio['options'].append({'data': put_data, 'symbol': put_id, 'premium_received': put_premium})
-        portfolio['premium_costs'] += call_premium + put_premium
+    for option_couple in atm_options:
+        option1 = option_couple[0]
+        option2 = option_couple[1]
+        option1_data = options_df.loc[options_df['symbol'] == option1].iloc[0]
+        option2_data = options_df.loc[options_df['symbol'] == option1].iloc[0]
+        portfolio['options'].append({'data': option1_data, 'symbol': option1})
+        portfolio['options'].append({'data': option2_data, 'symbol': option2})
+
+    for option in portfolio["options"]:
+        option_data_latest = options_df[options_df["date"] == start_date]
+        option_data_latest= option_data_latest[option_data_latest["symbol"] == option["symbol"]]
+        premium = ((option_data_latest['best_bid'].values[0] + option_data_latest['best_offer'].values[0]) / 2) * option["data"]['contract_size']
+        portfolio['premium_costs'] += premium
 
     expiry_date_list = []
     for option in portfolio["options"]:
@@ -47,10 +55,10 @@ def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, opt
 
             if exdate == current_date:
                 # Calculate and realize P&L from option expiration
+                contract_size = option["data"]['contract_size']
                 option_type = option["symbol"].split()[1][6]
                 pnl = min(spot_price - (option["data"]["strike_price"]/1000), 0) if 'P' == option_type else min(-spot_price + (option["data"]["strike_price"]/1000), 0)
                 pnl *= option["data"]['contract_size']
-                contract_size = option["data"]['contract_size']
                 portfolio['premium_costs'] += pnl
                 options_to_remove.append(option)
             else:
@@ -81,21 +89,20 @@ def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, opt
         
         if hedging:
             contract_size = 100 # TODO: Fix this
-            delta_without_stocks = eq.get_total_delta(options_df, underlying_df, risk_free_df, portfolio_option_symbols, current_date)
-            delta_with_stocks = delta_without_stocks - (portfolio["underlying"] * (1/contract_size))
-            #print("Delta before hedge:", delta_with_stocks)
+            delta = eq.get_total_delta(options_df, underlying_df, risk_free_df, portfolio_option_symbols, current_date) - (portfolio["underlying"] * (1/contract_size))
+            #print("Delta before hedge:", delta)
             #print(current_date)
             #print("Delta before hedging", delta_with_stocks)
             if current_date != trading_day_index:
-                if (abs(delta_with_stocks) > 0.1):
-                    hedge_count = -int(round(delta_with_stocks * contract_size))
-                    portfolio["stock_costs"] += hedge_count * spot_price
-                    portfolio["underlying"] -= hedge_count
+                if (abs(delta) > 0.1):
+                    hedge_count = int(round(delta * contract_size))
+                    #print("Hedge count:", hedge_count)
+                    portfolio["stock_costs"] -= hedge_count * spot_price
+                    portfolio["underlying"] += hedge_count
 
-            delta_without_stocks = eq.get_total_delta(options_df, underlying_df, risk_free_df, portfolio_option_symbols, current_date)
-            delta_with_stocks = delta_without_stocks - (portfolio["underlying"] * (1/contract_size))
+            delta = eq.get_total_delta(options_df, underlying_df, risk_free_df, portfolio_option_symbols, current_date) - (portfolio["underlying"] * (1/contract_size))
 
-        #print("Delta after hedge:", delta_with_stocks)
+            #print("Delta after hedge:", delta)
         #print("Number of stocks after hedge:", portfolio["underlying"])
 
         
@@ -104,5 +111,8 @@ def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, opt
         # Calculate and include real cash changes in daily P&L
     
         daily_returns.append(daily_pnl)
+
+        if file is not None:
+            file.write(f"{current_date} {daily_pnl}\n")
 
     return pd.Series(daily_returns, index=trading_day_index)
