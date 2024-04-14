@@ -151,7 +151,7 @@ def get_iv(S, K, T, r, market_price, option_type, q=0, historical=None):
             return f
     
     try:
-        return optimize.brentq(bs_price,0.0001,100,maxiter=1000)
+        return optimize.brentq(bs_price,0.00000001,10000,maxiter=1000)
     except ValueError:
         # Brent failed, trying Newton-Rhapson
         try:
@@ -178,8 +178,25 @@ def get_delta(options_df, underlying_df, risk_free_df, option, date, historical)
     time_to_maturity = (option_df["exdate"].item() - date).days / 365
     price = (option_df["best_bid"].item() + option_df["best_offer"].item()) / 2
     type = option.split()[1][6]
-    risk_free_rate = risk_free_df.loc[risk_free_df['DATE'] == date, 'DGS10'].item()
+    try:
+        risk_free_rate = risk_free_df.loc[risk_free_df['DATE'] == date, 'DGS10'].item()
+        if (risk_free_rate == "."):
+            risk_free_rate = risk_free_df.loc[risk_free_df['DATE'] == (date - pd.Timedelta(days=1)), 'DGS10'].item()
+    except ValueError:
+        i = 1
+        while (True):
+            try:
+                risk_free_rate = risk_free_df.loc[risk_free_df['DATE'] == date, 'DGS10'].item()
+                if (risk_free_rate == "."):
+                    risk_free_rate = risk_free_df.loc[risk_free_df['DATE'] == (date - pd.Timedelta(days=i)), 'DGS10'].item()
+                    break
+            except ValueError:
+                i += 1
+                continue
+            
     risk_free_rate = float(risk_free_rate) / 100
+    print(date)
+    print(risk_free_rate)
     try:
         starting_date = date - pd.Timedelta(days=365)
         starting_dividend = underlying_df.loc[underlying_df['date'] == starting_date, 'DIVAMT'].item()
