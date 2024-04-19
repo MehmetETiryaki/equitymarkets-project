@@ -44,6 +44,7 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
     trading_day_index = [pd.Timestamp(date.date()) for date in trading_day_index]
 
     for current_date in trading_day_index:
+        print(current_date)
         spot_price = underlying_df.loc[underlying_df['date'] == current_date, 'PRC'].item()
         daily_unrealized_pnl = 0  # Initialize daily unrealized profit/loss from options
         # Process options expiring today
