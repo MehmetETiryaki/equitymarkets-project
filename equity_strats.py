@@ -6,12 +6,14 @@ from equity import find_atm
 import equity as eq
 
 
-def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, options_df, underlying_df, risk_free_df, start_date, number_of_options, expiration_time, hedging=True, file=None):
+def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_free_df, start_date, number_of_options, expiration_time, hedging=True, file=None):
     portfolio = {'options': [], 'underlying': 0, 'premium_costs': 0, "stock_costs": 0}
+    results_dict = {"date": [], "cost of selling options": [], "number of stocks eod": [], "delta eod": [], "costs of stocks after": [], "pnl of premiums": [], "pnl of stocks": [], "unrealized pnl": [], "daily pnl": [], \
+                    "number of stocks before": [], "delta before": [], "costs of stocks daily": []}
     daily_returns = []
     nyse_calendar = mcal.get_calendar('NYSE')
 
-    atm_options = find_atm(options_csv, underlying_csv, start_date, 1,expiration_time, 0.1)
+    atm_options = find_atm(options_df, underlying_df, start_date, 1,expiration_time, 0.1)
     option_couple = atm_options[0]
     for i in range(number_of_options - 1):
         atm_options.append(option_couple)
@@ -65,18 +67,11 @@ def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, opt
                 # Calculate unrealized P&L for non-expiring options using the most recent premium information
                 current_premium = ((option_data_latest['best_bid'].values[0] + option_data_latest['best_offer'].values[0]) / 2) * option["data"]['contract_size']
                 daily_unrealized_pnl -= current_premium 
+        results_dict["pnl of premiums"].append(daily_unrealized_pnl)
 
-        #print(current_date)
-        #print("Premium pnl:", daily_unrealized_pnl)
-        #print("Premium costs:", portfolio["premium_costs"])
         daily_unrealized_pnl += spot_price * portfolio["underlying"]
-        #print("Number of stocks:", portfolio["underlying"])
-        #print("Stock pnl:", spot_price * portfolio["underlying"])
-        #print("Stock costs:", portfolio["stock_costs"])
-        #print("Total pnl:", daily_unrealized_pnl)
-        #print("Total costs:", portfolio['premium_costs'] + portfolio["stock_costs"])
-        #print("Total real pnl:", daily_unrealized_pnl + portfolio['premium_costs'] + portfolio["stock_costs"])
-        #print("Spot price:", spot_price)
+        results_dict["pnl of stocks"].append(spot_price * portfolio["underlying"])
+
         # Remove expired options
         for option in options_to_remove:
             portfolio['options'].remove(option)
@@ -90,9 +85,12 @@ def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, opt
         if hedging:
             contract_size = 100 # TODO: Fix this
             delta = eq.get_total_delta(options_df, underlying_df, risk_free_df, portfolio_option_symbols, current_date) - (portfolio["underlying"] * (1/contract_size))
+            results_dict["number of stocks before"].append(portfolio["underlying"])
+            results_dict["delta before"].append(delta)
             #print("Delta before hedge:", delta)
             #print(current_date)
             #print("Delta before hedging", delta_with_stocks)
+            hedge_count = 0
             if current_date != trading_day_index:
                 if (abs(delta) > 0.1):
                     hedge_count = int(round(delta * contract_size))
@@ -101,9 +99,18 @@ def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, opt
                     portfolio["underlying"] += hedge_count
 
             delta = eq.get_total_delta(options_df, underlying_df, risk_free_df, portfolio_option_symbols, current_date) - (portfolio["underlying"] * (1/contract_size))
+            results_dict["number of stocks eod"].append(portfolio["underlying"])
+            results_dict["delta eod"].append(delta)
 
             #print("Delta after hedge:", delta)
         #print("Number of stocks after hedge:", portfolio["underlying"])
+
+        results_dict["costs of stocks daily"].append(hedge_count * spot_price)
+        results_dict["date"].append(current_date)
+        results_dict["cost of selling options"].append(portfolio["premium_costs"])
+        results_dict["costs of stocks after"].append(portfolio["stock_costs"])
+        results_dict["unrealized pnl"].append(daily_unrealized_pnl)
+        results_dict["daily pnl"].append(daily_pnl)
 
         
         #print("Delta after hedging", delta_with_stocks)
@@ -115,4 +122,140 @@ def backtest_short_straddle_with_premium_change(options_csv, underlying_csv, opt
         if file is not None:
             file.write(f"{current_date} {daily_pnl}\n")
 
+    return pd.DataFrame(results_dict)
+
+
+def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, index_underlying_df, risk_free_df, options_weights_dict, start_date, target_expiry, etf_num):
+    portfolio = {'companies': {}, 'underlying': 0, 'premium_costs': 0, "stock_costs": 0}
+    daily_returns = []
+    nyse_calendar = mcal.get_calendar('NYSE')
+
+    for company in options_weights_dict:
+        company_dict = {}
+        atm_couple = find_atm(options_df_dict[company], underlying_df_dict[company], start_date, 1, 90, 0.05)[0]
+        company_df = options_df_dict[company]
+        option1_df = company_df[company_df["symbol"] == atm_couple[0]]
+        option2_df = company_df[company_df["symbol"] == atm_couple[1]]
+        company_dict["option1_df"] =  option1_df
+        company_dict["option2_df"] =  option2_df
+        company_dict["couple"] = atm_couple
+        company_dict["holdings"] = options_weights_dict[company]
+        company_dict["exdate"] = option1_df[option1_df["date"] == start_date]["exdate"].iloc[0]
+        company_dict["contract_size"] = option1_df[option1_df["date"] == start_date]["contract_size"].iloc[0]
+        company_dict["company"] = company
+        portfolio["companies"][company] = company_dict
+
+    etf_couple = eq.find_atm(index_options_df, index_underlying_df, start_date, 1, target_expiry, 0.05)[0]
+    etf1_df = index_options_df[index_options_df["symbol"] == etf_couple[0]]
+    etf1_df_start = etf1_df[etf1_df["date"] == start_date]
+    etf2_df = index_options_df[index_options_df["symbol"] == etf_couple[1]]
+    etf2_df_start = etf1_df[etf1_df["date"] == start_date]
+    etf_expiration = etf1_df_start["exdate"].iloc[0]
+
+    trading_days = nyse_calendar.schedule(start_date, etf_expiration)
+    trading_day_index = mcal.date_range(trading_days, frequency='1D')
+    # Change all dates to timestamps, with time 00:00:00
+    trading_day_index = [pd.Timestamp(date.date()) for date in trading_day_index]
+
+    etf1_start_premium = (etf1_df_start["best_bid"].iloc[0] + etf1_df_start["best_offer"].iloc[0]) / 2
+    etf2_start_premium = (etf2_df_start["best_bid"].iloc[0] + etf2_df_start["best_offer"].iloc[0]) / 2
+    total_etf_premium = (etf1_start_premium + etf2_start_premium) * etf_num
+    etf_contract_size = etf1_df_start["contract_size"].iloc[0]
+    portfolio["premium_costs"] += total_etf_premium * etf_contract_size
+
+    total_company_premium = 0
+    for company_dict in portfolio["companies"].values():
+        total_premium = 0
+        starting_df1 = company_dict["option1_df"][company_dict["option1_df"]["date"] == start_date]
+        starting_df2 = company_dict["option2_df"][company_dict["option2_df"]["date"] == start_date] 
+        starting_premium1 = (starting_df1["best_bid"].iloc[0] + starting_df1["best_offer"].iloc[0]) / 2
+        starting_premium2 = (starting_df2["best_bid"].iloc[0] + starting_df2["best_offer"].iloc[0]) / 2
+        total_premium = (starting_premium1 + starting_premium2) * company_dict["holdings"]
+        total_company_premium += total_premium * company_dict["contract_size"]
+        print(company_dict["couple"])
+
+    portfolio["premium_costs"] -= total_company_premium
+
+    for current_date in trading_day_index:
+        print(current_date)
+        companies_to_remove = []
+        daily_premiums = 0
+        for company_dict in portfolio["companies"].values():   
+
+            option1_df = company_dict["option1_df"][company_dict["option1_df"]["date"] == current_date]
+            option2_df = company_dict["option2_df"][company_dict["option2_df"]["date"] == current_date]
+
+            if (current_date != company_dict["exdate"]):
+
+                premium1 = (option1_df["best_bid"].iloc[0] + option1_df["best_offer"].iloc[0]) / 2
+                premium2 = (option2_df["best_bid"].iloc[0] + option2_df["best_offer"].iloc[0]) / 2
+
+                total_premium = (premium1 + premium2) * company_dict["contract_size"] * company_dict["holdings"]
+                daily_premiums += total_premium
+            else:
+                companies_to_remove.append(company_dict["company"])
+
+                option_expired1 = company_dict["couple"][0]
+                option_expired2 = company_dict["couple"][1]
+
+                underlying_df = underlying_df_dict[company_dict["company"]]
+                underlying_df_expiration = underlying_df[underlying_df["date"] == current_date]
+                spot_price = underlying_df_expiration["PRC"].iloc[0]
+
+                option_1_type = option_expired1[6]
+                option_2_type = option_expired2[6]
+
+                strike_price1 = option1_df["strike_price"].iloc[0] / 1000
+                strike_price2 = option2_df["strike_price"].iloc[0] / 1000
+
+                pnl1 = max((-spot_price + strike_price1), 0) if 'P' == option_1_type else max((spot_price - strike_price1), 0)
+                pnl2 = max((-spot_price + strike_price1), 0) if 'P' == option_2_type else max((spot_price - strike_price2), 0)
+
+                
+
+                portfolio["premium_costs"] += total_pnl
+            
+        for company in companies_to_remove:
+            portfolio["companies"].pop(company)
+
+        etf_option1_df = etf1_df[etf1_df["date"] == current_date]
+        etf_option2_df = etf2_df[etf2_df["date"] == current_date]
+
+        if (current_date != etf_expiration):
+
+            etf1_premium = (etf_option1_df["best_bid"].iloc[0] + etf_option1_df["best_offer"].iloc[0]) / 2
+            etf2_premium = (etf_option2_df["best_bid"].iloc[0] + etf_option2_df["best_offer"].iloc[0]) / 2
+            etf_premium_total = (etf1_premium + etf2_premium) * etf_num * etf_contract_size
+
+            daily_premiums -= etf_premium_total
+
+        else:
+            option_expired1 = etf_couple[0]
+            option_expired2 = etf_couple[1]
+
+            underlying_df = index_underlying_df
+            underlying_df_expiration = underlying_df[underlying_df["date"] == current_date]
+            spot_price = underlying_df_expiration["PRC"].iloc[0]
+
+            option_1_type = option_expired1[6]
+            option_2_type = option_expired2[6]
+
+            strike_price1 = etf_option1_df["strike_price"].iloc[0] / 1000
+            strike_price2 = etf_option2_df["strike_price"].iloc[0] / 1000
+
+            pnl1 = -max((-spot_price + strike_price1), 0) if 'P' == option_1_type else -max((spot_price - strike_price1), 0)
+            pnl1 = -max((-spot_price + strike_price1), 0) if 'P' == option_1_type else -max((spot_price - strike_price1), 0)
+
+            total_pnl = pnl1 + pnl2
+
+            portfolio["premium_costs"] += total_pnl
+
+        daily_pnl = daily_premiums + portfolio["premium_costs"]
+
+        daily_returns.append(daily_pnl)
+
     return pd.Series(daily_returns, index=trading_day_index)
+
+
+
+    

@@ -5,7 +5,7 @@ from scipy import optimize
 import scipy.stats as si
 from scipy.stats import norm
 
-def find_atm(options_data: str, underlying_data: str, date: pd.Timestamp, num_options: int, target_expiry: int, tol: float) -> list[tuple[str, str]]:
+def find_atm(options_df: pd.DataFrame, underlying_df: pd.DataFrame, date: pd.Timestamp, num_options: int, target_expiry: int, tol: float) -> list[tuple[str, str]]:
     """
     Finds at-the-money option couples (put and call) for a given issuer at a specific date, only works with 1 issuer, do not input csv file with more than 1 issuer
     Takes in the target days to expiry, and number of option couples as arguments.
@@ -25,11 +25,9 @@ def find_atm(options_data: str, underlying_data: str, date: pd.Timestamp, num_op
     """
 
     # Initializing data
-    options_df = pd.read_csv(options_data, parse_dates = ["exdate", "date"])
     options_df = options_df[options_df["date"] == date]
     options_df.reset_index(inplace=True)
 
-    underlying_df = pd.read_csv(underlying_data, parse_dates = ["date"])
     underlying_df = underlying_df[underlying_df["date"] == date]
     underlying_df.reset_index(inplace=True)
     stock_price = underlying_df["PRC"][0]
@@ -56,13 +54,9 @@ def find_atm(options_data: str, underlying_data: str, date: pd.Timestamp, num_op
         option1 = couple[0]
         option2 = couple[1]
         expiration_date = options_df.loc[option1]["exdate"]
-        delta1 = options_df.loc[option1]["delta"]
-        delta2 = options_df.loc[option2]["delta"]
         expiration_time_interval = (expiration_date - date).days
-        if (delta1 != np.nan and delta2 != np.nan):
-            # TODO: Remove this after delta functionality
-            option_expiry_dict[couple] = expiration_time_interval
-            expiry_set.add(expiration_time_interval)
+        expiry_set.add(expiration_time_interval)
+        option_expiry_dict[couple] = expiration_time_interval
     expiry = min(expiry_set, key=lambda x: abs(x - target_expiry))
     option_expiry_dict = {key: value for key, value in option_expiry_dict.items() if value == expiry}
     
@@ -233,8 +227,12 @@ def calculate_allocation_premium_neutral(
         etf_weightings: dict[str, float]) -> dict[str, float]:
     
     # Calculate index premium
-    etf_atm_options = find_atm(path_to_etf_options, path_to_etf_underlying, date, 1, target_expiry, tol)
+
+    etf_options_df =  pd.read_csv(path_to_etf_options, parse_dates = ["exdate", "date"])
+    etf_stocks_df = pd.read_csv(path_to_etf_underlying, parse_dates = ["date"])
+    etf_atm_options = find_atm(etf_options_df, etf_stocks_df, date, 1, target_expiry, tol)
     etf_options_df = pd.read_csv(path_to_etf_options, parse_dates = ["exdate", "date"])
+    etf_options_df = etf_options_df[etf_options_df["date"] == date]
                               
    # Calculate total ETF premium from ATM options
     total_etf_premium = 0
@@ -247,21 +245,13 @@ def calculate_allocation_premium_neutral(
     
     total_etf_premium *= num_options # Only 1 atm option couple for ETF, so multiply by number of options we buy/sell
 
-    # Calculate total ETF premium from ATM options
-    total_etf_premium = 0
-    for call_id, put_id in etf_atm_options:
-        call_data = etf_options_df.loc[etf_options_df['symbol'] == call_id].iloc[0]
-        put_data = etf_options_df.loc[etf_options_df['symbol'] == put_id].iloc[0]
-        call_premium = ((call_data['best_bid'] + call_data['best_offer']) / 2) * call_data['contract_size']
-        put_premium = ((put_data['best_bid'] + put_data['best_offer']) / 2) * put_data['contract_size']
-        total_etf_premium += call_premium + put_premium
-
     total_stock_premiums = {}
 
     for stock, stock_option_path in paths_to_stock_options.items():
         stock_options_df = pd.read_csv(stock_option_path, parse_dates=["exdate", "date"])
         stock_underlying_path = paths_to_stock_underlying[stock]
-        stock_atm_options = find_atm(stock_option_path, stock_underlying_path, date, 1, target_expiry, tol)
+        stock_underlying_df =  pd.read_csv(stock_underlying_path, parse_dates = ["date"])
+        stock_atm_options = find_atm(stock_options_df, stock_underlying_df, date, 1, target_expiry, tol)
 
         total_stock_premium = 0
         for call_id, put_id in stock_atm_options:
@@ -273,12 +263,13 @@ def calculate_allocation_premium_neutral(
         
         total_stock_premiums[stock] = total_stock_premium
 
+    print(total_stock_premiums)
     # Constant multiplier
     weighted_premiums = {stock: total_stock_premiums[stock] * etf_weightings[stock] for stock in etf_weightings}
     sum_weighted_premiums = sum(weighted_premiums.values())
     constant_multiplier = total_etf_premium / sum_weighted_premiums
 
     # Apply constant multiplier to each stock's weighted premium to determine the number of straddles
-    allocation_results = {stock: round(weighted_premiums[stock] * constant_multiplier / total_stock_premiums[stock]) for stock in weighted_premiums}
+    allocation_results = {stock: round(weighted_premiums[stock] * constant_multiplier / total_stock_premiums[stock] * 100) for stock in weighted_premiums}
 
     return allocation_results
