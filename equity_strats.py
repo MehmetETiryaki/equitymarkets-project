@@ -126,8 +126,8 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
     return pd.DataFrame(results_dict)
 
 
-def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, index_underlying_df, risk_free_df, options_weights_dict, start_date, target_expiry, etf_num):
-    portfolio = {'companies': {}, 'underlying': 0, 'premium_costs': 0, "stock_costs": 0}
+def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, index_underlying_df, risk_free_df, options_weights_dict, start_date, target_expiry, etf_num, hedge = True):
+    portfolio = {'companies': {}, 'underlying': {}, 'premium_costs': 0, "stock_costs": 0}
     daily_returns = []
     nyse_calendar = mcal.get_calendar('NYSE')
 
@@ -139,19 +139,25 @@ def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, i
         option2_df = company_df[company_df["symbol"] == atm_couple[1]]
         company_dict["option1_df"] =  option1_df
         company_dict["option2_df"] =  option2_df
+        company_dict["options_df"] =  company_df[company_df["symbol"].isin(list(atm_couple))]
+        company_dict["options_df"]
         company_dict["couple"] = atm_couple
         company_dict["holdings"] = options_weights_dict[company]
         company_dict["exdate"] = option1_df[option1_df["date"] == start_date]["exdate"].iloc[0]
         company_dict["contract_size"] = option1_df[option1_df["date"] == start_date]["contract_size"].iloc[0]
         company_dict["company"] = company
         portfolio["companies"][company] = company_dict
+        portfolio["underlying"][company] = 0
+        print(atm_couple)
 
     etf_couple = eq.find_atm(index_options_df, index_underlying_df, start_date, 1, target_expiry, 0.05)[0]
+    print(etf_couple)
     etf1_df = index_options_df[index_options_df["symbol"] == etf_couple[0]]
     etf1_df_start = etf1_df[etf1_df["date"] == start_date]
     etf2_df = index_options_df[index_options_df["symbol"] == etf_couple[1]]
     etf2_df_start = etf1_df[etf1_df["date"] == start_date]
     etf_expiration = etf1_df_start["exdate"].iloc[0]
+    portfolio["underlying"]["etf"] = 0
 
     trading_days = nyse_calendar.schedule(start_date, etf_expiration)
     trading_day_index = mcal.date_range(trading_days, frequency='1D')
@@ -173,7 +179,6 @@ def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, i
         starting_premium2 = (starting_df2["best_bid"].iloc[0] + starting_df2["best_offer"].iloc[0]) / 2
         total_premium = (starting_premium1 + starting_premium2) * company_dict["holdings"]
         total_company_premium += total_premium * company_dict["contract_size"]
-        print(company_dict["couple"])
 
     portfolio["premium_costs"] -= total_company_premium
 
@@ -183,23 +188,35 @@ def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, i
         daily_premiums = 0
         for company_dict in portfolio["companies"].values():   
 
+            company_name = company_dict["company"]
             option1_df = company_dict["option1_df"][company_dict["option1_df"]["date"] == current_date]
             option2_df = company_dict["option2_df"][company_dict["option2_df"]["date"] == current_date]
+            option_list = [company_dict["couple"][0], company_dict["couple"][1]]
 
             if (current_date != company_dict["exdate"]):
+
+                underlying_df = underlying_df_dict[company_name]
+                underlying_df_cur = underlying_df[underlying_df["date"] == current_date]
+                spot_price = underlying_df_cur["PRC"].iloc[0]
 
                 premium1 = (option1_df["best_bid"].iloc[0] + option1_df["best_offer"].iloc[0]) / 2
                 premium2 = (option2_df["best_bid"].iloc[0] + option2_df["best_offer"].iloc[0]) / 2
 
                 total_premium = (premium1 + premium2) * company_dict["contract_size"] * company_dict["holdings"]
                 daily_premiums += total_premium
+
+                delta = (eq.get_total_delta(company_dict["options_df"], underlying_df_dict[company_name], risk_free_df, option_list, current_date)  * company_dict["holdings"])  + ((1/company_dict["contract_size"]) * portfolio["underlying"][company_name])
+                hedge_count = -int(round(delta * company_dict["contract_size"]))
+                portfolio["underlying"][company_name] += hedge_count
+                portfolio["stock_costs"] -= hedge_count * spot_price
+
             else:
-                companies_to_remove.append(company_dict["company"])
+                companies_to_remove.append(company_name)
 
                 option_expired1 = company_dict["couple"][0]
                 option_expired2 = company_dict["couple"][1]
 
-                underlying_df = underlying_df_dict[company_dict["company"]]
+                underlying_df = underlying_df_dict[company_name]
                 underlying_df_expiration = underlying_df[underlying_df["date"] == current_date]
                 spot_price = underlying_df_expiration["PRC"].iloc[0]
 
@@ -212,7 +229,7 @@ def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, i
                 pnl1 = max((-spot_price + strike_price1), 0) if 'P' == option_1_type else max((spot_price - strike_price1), 0)
                 pnl2 = max((-spot_price + strike_price1), 0) if 'P' == option_2_type else max((spot_price - strike_price2), 0)
 
-                
+                total_pnl = pnl1 + pnl2
 
                 portfolio["premium_costs"] += total_pnl
             
