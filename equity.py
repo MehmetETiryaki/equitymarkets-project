@@ -210,7 +210,6 @@ def get_iv(S, K, T, r, market_price, option_type, q=0, historical=None):
             return optimize.newton(bs_price, historical)
         except RuntimeError:
             # Newton-Rhapson failed, using historical volatility
-            print("HEREEEEEE")
             return historical
 
 def delta_calc(r, S, K, T, sigma, type, q=0):
@@ -275,42 +274,39 @@ def get_delta(options_df, underlying_df, risk_free_df, option, date, historical)
 
 def calculate_allocation_premium_neutral(
         num_options: int, 
-        path_to_etf_options: str,
-        path_to_etf_underlying: str,
-        paths_to_stock_options: dict[str, str], 
-        paths_to_stock_underlying: dict[str, str], 
+        etf_options_df: pd.DataFrame,
+        etf_underlying_df: pd.DataFrame,
+        stock_options_dataframes: dict[str, pd.DataFrame],
+        stock_underlying_dataframes: dict[str, pd.DataFrame],
         date: pd.Timestamp, 
         target_expiry: int,
         tol: float,
         etf_weightings: dict[str, float]) -> dict[str, float]:
-    
-    # Calculate index premium
+    # Calculate ATM options for ETF
+    etf_atm_options = find_atm(etf_options_df, etf_underlying_df, date, 1, target_expiry, tol)
 
-    etf_options_df =  pd.read_csv(path_to_etf_options, parse_dates = ["exdate", "date"])
-    etf_stocks_df = pd.read_csv(path_to_etf_underlying, parse_dates = ["date"])
-    etf_atm_options = find_atm(etf_options_df, etf_stocks_df, date, 1, target_expiry, tol)
-    etf_options_df = pd.read_csv(path_to_etf_options, parse_dates = ["exdate", "date"])
-    etf_options_df = etf_options_df[etf_options_df["date"] == date]
-                              
-   # Calculate total ETF premium from ATM options
+    # Current etf_weightings don't sum to 1, so we scale them
+    print("HERE")
+    scaled_etf_weightings = {stock: etf_weightings[stock] / sum(etf_weightings.values()) for stock in etf_weightings}
+    
+    # Calculate total ETF premium from ATM options
     total_etf_premium = 0
     for call_id, put_id in etf_atm_options:
         call_data = etf_options_df.loc[etf_options_df['symbol'] == call_id].iloc[0]
         put_data = etf_options_df.loc[etf_options_df['symbol'] == put_id].iloc[0]
         call_premium = ((call_data['best_bid'] + call_data['best_offer']) / 2) * call_data['contract_size']
         put_premium = ((put_data['best_bid'] + put_data['best_offer']) / 2) * put_data['contract_size']
-        total_etf_premium += call_premium + put_premium
-    
-    total_etf_premium *= num_options # Only 1 atm option couple for ETF, so multiply by number of options we buy/sell
+        total_etf_premium += call_premium + put_premium # Plus because selling options on index
 
-    total_stock_premiums = {}
+    total_etf_premium *= num_options  # Adjust for the number of options we buy/sell
 
-    for stock, stock_option_path in paths_to_stock_options.items():
-        stock_options_df = pd.read_csv(stock_option_path, parse_dates=["exdate", "date"])
-        stock_underlying_path = paths_to_stock_underlying[stock]
-        stock_underlying_df =  pd.read_csv(stock_underlying_path, parse_dates = ["date"])
+    # Calculate total premium for each stock
+    stock_premiums = {}
+    total_weighted_premiums = 0
+    for stock, stock_options_df in stock_options_dataframes.items():
+        stock_underlying_df = stock_underlying_dataframes[stock]
         stock_atm_options = find_atm(stock_options_df, stock_underlying_df, date, 1, target_expiry, tol)
-
+        
         total_stock_premium = 0
         for call_id, put_id in stock_atm_options:
             call_data = stock_options_df.loc[stock_options_df['symbol'] == call_id].iloc[0]
@@ -319,15 +315,14 @@ def calculate_allocation_premium_neutral(
             put_premium = ((put_data['best_bid'] + put_data['best_offer']) / 2) * put_data['contract_size']
             total_stock_premium += call_premium + put_premium
         
-        total_stock_premiums[stock] = total_stock_premium
+        stock_premiums[stock] = total_stock_premium
+        total_weighted_premiums += total_stock_premium * scaled_etf_weightings[stock]
 
-    print(total_stock_premiums)
-    # Constant multiplier
-    weighted_premiums = {stock: total_stock_premiums[stock] * etf_weightings[stock] for stock in etf_weightings}
-    sum_weighted_premiums = sum(weighted_premiums.values())
-    constant_multiplier = total_etf_premium / sum_weighted_premiums
+    print(stock_premiums)
 
-    # Apply constant multiplier to each stock's weighted premium to determine the number of straddles
-    allocation_results = {stock: round(weighted_premiums[stock] * constant_multiplier / total_stock_premiums[stock] * 100) for stock in weighted_premiums}
+    c = total_etf_premium / total_weighted_premiums    
+
+    # Get the number of straddles for each stock by C * scaled_weighting.
+    allocation_results = {stock: int(round(c * scaled_etf_weightings[stock] * num_options)) for stock in stock_premiums}
 
     return allocation_results
