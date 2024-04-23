@@ -69,7 +69,7 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
                 pnl *= option["data"]['contract_size']
                 portfolio['premium_costs'] += pnl
                 options_to_remove.append(option)
-            elif buyback_date == current_date:
+            elif buyback_date == current_date and buyback_date != exdate:
                 current_premium = ((option_data_latest['best_bid'].values[0] + option_data_latest['best_offer'].values[0]) / 2) * option["data"]['contract_size']
                 daily_unrealized_pnl -= current_premium 
                 options_to_remove.append(option)
