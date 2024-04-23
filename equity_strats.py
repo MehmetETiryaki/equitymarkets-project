@@ -44,7 +44,6 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
     trading_day_index = [pd.Timestamp(date.date()) for date in trading_day_index]
 
     for current_date in trading_day_index:
-        print(current_date)
         spot_price = underlying_df.loc[underlying_df['date'] == current_date, 'PRC'].item()
         daily_unrealized_pnl = 0  # Initialize daily unrealized profit/loss from options
         # Process options expiring today
@@ -83,6 +82,7 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
 
         #print("Number of stocks before hedge:", portfolio["underlying"])
         
+        hedge_count = 0
         if hedging:
             contract_size = 100 # TODO: Fix this
             delta = eq.get_total_delta(options_df, underlying_df, risk_free_df, portfolio_option_symbols, current_date) - (portfolio["underlying"] * (1/contract_size))
@@ -102,7 +102,11 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
             delta = eq.get_total_delta(options_df, underlying_df, risk_free_df, portfolio_option_symbols, current_date) - (portfolio["underlying"] * (1/contract_size))
             results_dict["number of stocks eod"].append(portfolio["underlying"])
             results_dict["delta eod"].append(delta)
-
+        else:
+            results_dict["number of stocks eod"].append(0)
+            results_dict["delta eod"].append(0)
+            results_dict["number of stocks before"].append(0)
+            results_dict["delta before"].append(0)
             #print("Delta after hedge:", delta)
         #print("Number of stocks after hedge:", portfolio["underlying"])
 
