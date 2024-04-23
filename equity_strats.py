@@ -50,6 +50,7 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
             break
         print(current_date)
         spot_price = underlying_df.loc[underlying_df['date'] == current_date, 'PRC'].item()
+        div_amt = underlying_df.loc[underlying_df['date'] == current_date, 'DIVAMT'].item()
         daily_unrealized_pnl = 0  # Initialize daily unrealized profit/loss from options
         # Process options expiring today
         options_to_remove = []
@@ -69,7 +70,7 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
                 pnl *= option["data"]['contract_size']
                 portfolio['premium_costs'] += pnl
                 options_to_remove.append(option)
-            elif buyback_date == current_date and buyback_date != exdate:
+            elif buyback_date == current_date:
                 current_premium = ((option_data_latest['best_bid'].values[0] + option_data_latest['best_offer'].values[0]) / 2) * option["data"]['contract_size']
                 daily_unrealized_pnl -= current_premium 
                 options_to_remove.append(option)
@@ -86,6 +87,8 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
         daily_unrealized_pnl += spot_price * portfolio["underlying"]
         results_dict["pnl of stocks"].append(spot_price * portfolio["underlying"])
 
+        if (not math.isnan(div_amt)):
+            daily_unrealized_pnl += div_amt * portfolio["underlying"]
 
         # Daily rebalance based on delta
         portfolio_option_symbols = [option['symbol'] for option in portfolio['options']]
