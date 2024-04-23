@@ -6,12 +6,14 @@ from equity import find_atm
 import equity as eq
 
 
-def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_free_df, start_date, number_of_options, expiration_time, hedging=True, file=None):
+def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_free_df, start_date, number_of_options, expiration_time, buyback_period, hedging=True, file=None):
     portfolio = {'options': [], 'underlying': 0, 'premium_costs': 0, "stock_costs": 0}
     results_dict = {"date": [], "cost of selling options": [], "number of stocks eod": [], "delta eod": [], "costs of stocks after": [], "pnl of premiums": [], "pnl of stocks": [], "unrealized pnl": [], "daily pnl": [], \
                     "number of stocks before": [], "delta before": [], "costs of stocks daily": []}
     daily_returns = []
     nyse_calendar = mcal.get_calendar('NYSE')
+    buyback_period = pd.Timedelta(days=buyback_period)
+ 
 
     atm_options = find_atm(options_df, underlying_df, start_date, 1,expiration_time, 0.1)
     option_couple = atm_options[0]
@@ -44,6 +46,8 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
     trading_day_index = [pd.Timestamp(date.date()) for date in trading_day_index]
 
     for current_date in trading_day_index:
+        if len(portfolio["options"]) == 0:
+            break
         print(current_date)
         spot_price = underlying_df.loc[underlying_df['date'] == current_date, 'PRC'].item()
         daily_unrealized_pnl = 0  # Initialize daily unrealized profit/loss from options
@@ -55,6 +59,7 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
             # Fetch the option data that is most current as of the current_date
             #option_data_latest = options_df.loc[(options_df['symbol'] == option['symbol']) & (options_df['date'] <= current_date)].sort_values(by='date').iloc[-1]
             exdate = option['data']['exdate']
+            buyback_date = exdate - buyback_period
 
             if exdate == current_date:
                 # Calculate and realize P&L from option expiration
@@ -64,18 +69,23 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
                 pnl *= option["data"]['contract_size']
                 portfolio['premium_costs'] += pnl
                 options_to_remove.append(option)
+            elif buyback_date == current_date:
+                current_premium = ((option_data_latest['best_bid'].values[0] + option_data_latest['best_offer'].values[0]) / 2) * option["data"]['contract_size']
+                daily_unrealized_pnl -= current_premium 
+                options_to_remove.append(option)
             else:
                 # Calculate unrealized P&L for non-expiring options using the most recent premium information
                 current_premium = ((option_data_latest['best_bid'].values[0] + option_data_latest['best_offer'].values[0]) / 2) * option["data"]['contract_size']
                 daily_unrealized_pnl -= current_premium 
-        results_dict["pnl of premiums"].append(daily_unrealized_pnl)
-
-        daily_unrealized_pnl += spot_price * portfolio["underlying"]
-        results_dict["pnl of stocks"].append(spot_price * portfolio["underlying"])
 
         # Remove expired options
         for option in options_to_remove:
             portfolio['options'].remove(option)
+
+        results_dict["pnl of premiums"].append(daily_unrealized_pnl)
+        daily_unrealized_pnl += spot_price * portfolio["underlying"]
+        results_dict["pnl of stocks"].append(spot_price * portfolio["underlying"])
+
 
         # Daily rebalance based on delta
         portfolio_option_symbols = [option['symbol'] for option in portfolio['options']]
