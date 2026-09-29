@@ -1,6 +1,5 @@
 import pandas as pd
 import pandas_market_calendars as mcal
-import matplotlib.pyplot as plt
 import math as math
 from equity import find_atm
 import equity as eq
@@ -24,7 +23,7 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
         option1 = option_couple[0]
         option2 = option_couple[1]
         option1_data = options_df.loc[options_df['symbol'] == option1].iloc[0]
-        option2_data = options_df.loc[options_df['symbol'] == option1].iloc[0]
+        option2_data = options_df.loc[options_df['symbol'] == option2].iloc[0]
         portfolio['options'].append({'data': option1_data, 'symbol': option1})
         portfolio['options'].append({'data': option2_data, 'symbol': option2})
 
@@ -107,7 +106,7 @@ def backtest_short_straddle_with_premium_change(options_df, underlying_df, risk_
             #print(current_date)
             #print("Delta before hedging", delta_with_stocks)
             hedge_count = 0
-            if current_date != trading_day_index:
+            if current_date != trading_day_index[-1]:
                 if (abs(delta) > 0.1):
                     hedge_count = int(round(delta * contract_size))
                     #print("Hedge count:", hedge_count)
@@ -163,7 +162,7 @@ def backtest_long_straddle_with_premium_change(options_df, underlying_df, risk_f
         option1 = option_couple[0]
         option2 = option_couple[1]
         option1_data = options_df.loc[options_df['symbol'] == option1].iloc[0]
-        option2_data = options_df.loc[options_df['symbol'] == option1].iloc[0]
+        option2_data = options_df.loc[options_df['symbol'] == option2].iloc[0]
         portfolio['options'].append({'data': option1_data, 'symbol': option1})
         portfolio['options'].append({'data': option2_data, 'symbol': option2})
 
@@ -246,7 +245,7 @@ def backtest_long_straddle_with_premium_change(options_df, underlying_df, risk_f
             #print(current_date)
             #print("Delta before hedging", delta_with_stocks)
             hedge_count = 0
-            if current_date != trading_day_index:
+            if current_date != trading_day_index[-1]:
                 if (abs(delta) > 0.1):
                     hedge_count = int(round(delta * contract_size))
                     #print("Hedge count:", hedge_count)
@@ -299,7 +298,6 @@ def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, i
         company_dict["option1_df"] =  option1_df
         company_dict["option2_df"] =  option2_df
         company_dict["options_df"] =  company_df[company_df["symbol"].isin(list(atm_couple))]
-        company_dict["options_df"]
         company_dict["couple"] = atm_couple
         company_dict["holdings"] = options_weights_dict[company]
         company_dict["exdate"] = option1_df[option1_df["date"] == start_date]["exdate"].iloc[0]
@@ -314,7 +312,7 @@ def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, i
     etf1_df = index_options_df[index_options_df["symbol"] == etf_couple[0]]
     etf1_df_start = etf1_df[etf1_df["date"] == start_date]
     etf2_df = index_options_df[index_options_df["symbol"] == etf_couple[1]]
-    etf2_df_start = etf1_df[etf1_df["date"] == start_date]
+    etf2_df_start = etf2_df[etf2_df["date"] == start_date]
     etf_expiration = etf1_df_start["exdate"].iloc[0]
     portfolio["underlying"]["etf"] = 0
 
@@ -379,16 +377,16 @@ def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, i
                 underlying_df_expiration = underlying_df[underlying_df["date"] == current_date]
                 spot_price = underlying_df_expiration["PRC"].iloc[0]
 
-                option_1_type = option_expired1[6]
-                option_2_type = option_expired2[6]
+                option_1_type = option_expired1.split()[1][6]
+                option_2_type = option_expired2.split()[1][6]
 
                 strike_price1 = option1_df["strike_price"].iloc[0] / 1000
                 strike_price2 = option2_df["strike_price"].iloc[0] / 1000
 
                 pnl1 = max((-spot_price + strike_price1), 0) if 'P' == option_1_type else max((spot_price - strike_price1), 0)
-                pnl2 = max((-spot_price + strike_price1), 0) if 'P' == option_2_type else max((spot_price - strike_price2), 0)
+                pnl2 = max((-spot_price + strike_price2), 0) if 'P' == option_2_type else max((spot_price - strike_price2), 0)
 
-                total_pnl = pnl1 + pnl2
+                total_pnl = (pnl1 + pnl2) * company_dict["contract_size"] * company_dict["holdings"]
 
                 portfolio["premium_costs"] += total_pnl
             
@@ -414,16 +412,16 @@ def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, i
             underlying_df_expiration = underlying_df[underlying_df["date"] == current_date]
             spot_price = underlying_df_expiration["PRC"].iloc[0]
 
-            option_1_type = option_expired1[6]
-            option_2_type = option_expired2[6]
+            option_1_type = option_expired1.split()[1][6]
+            option_2_type = option_expired2.split()[1][6]
 
             strike_price1 = etf_option1_df["strike_price"].iloc[0] / 1000
             strike_price2 = etf_option2_df["strike_price"].iloc[0] / 1000
 
             pnl1 = -max((-spot_price + strike_price1), 0) if 'P' == option_1_type else -max((spot_price - strike_price1), 0)
-            pnl1 = -max((-spot_price + strike_price1), 0) if 'P' == option_1_type else -max((spot_price - strike_price1), 0)
+            pnl2 = -max((-spot_price + strike_price2), 0) if 'P' == option_2_type else -max((spot_price - strike_price2), 0)
 
-            total_pnl = pnl1 + pnl2
+            total_pnl = (pnl1 + pnl2) * etf_num * etf_contract_size
 
             portfolio["premium_costs"] += total_pnl
 
@@ -432,7 +430,3 @@ def backtest_dispersion(options_df_dict, underlying_df_dict, index_options_df, i
         daily_returns.append(daily_pnl)
 
     return pd.Series(daily_returns, index=trading_day_index)
-
-
-
-    

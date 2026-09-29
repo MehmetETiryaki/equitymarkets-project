@@ -149,7 +149,8 @@ def reverse_option(option_name:str) -> str:
     else:
         reverse = option_list[0] + " " + option_list[1][:6] + "C" + option_list[1][7:]
     return reverse
-            
+
+def get_total_delta(options_df: pd.DataFrame, underlying_df: pd.DataFrame, risk_free_df: pd.DataFrame, options_list: list[str], date: pd.Timestamp) -> float:
     """
     Gets the number of shares to buy or sell given a list of options, should be from the same issuer and have contract size 100
     
@@ -162,7 +163,6 @@ def reverse_option(option_name:str) -> str:
         Number of underlying stocks to buy or sell
 
     """
-def get_total_delta(options_df: pd.DataFrame, underlying_df: pd.DataFrame, risk_free_df: pd.DataFrame, options_list: list[str], date: pd.Timestamp) -> float:
 
     try:
         starting_date = date - pd.Timedelta(days=365)
@@ -237,13 +237,12 @@ def get_delta(options_df, underlying_df, risk_free_df, option, date, historical)
         i = 1
         while (True):
             try:
-                risk_free_rate = risk_free_df.loc[risk_free_df['DATE'] == date, 'DGS10'].item()
-                if (risk_free_rate == "."):
-                    risk_free_rate = risk_free_df.loc[risk_free_df['DATE'] == (date - pd.Timedelta(days=i)), 'DGS10'].item()
+                risk_free_rate = risk_free_df.loc[risk_free_df['DATE'] == (date - pd.Timedelta(days=i)), 'DGS10'].item()
+                if (risk_free_rate != "."):
                     break
             except ValueError:
-                i += 1
-                continue
+                pass
+            i += 1
             
     risk_free_rate = float(risk_free_rate) / 100
     try:
@@ -286,7 +285,6 @@ def calculate_allocation_premium_neutral(
     etf_atm_options = find_atm(etf_options_df, etf_underlying_df, date, 1, target_expiry, tol)
 
     # Current etf_weightings don't sum to 1, so we scale them
-    print("HERE")
     scaled_etf_weightings = {stock: etf_weightings[stock] / sum(etf_weightings.values()) for stock in etf_weightings}
     
     # Calculate total ETF premium from ATM options
